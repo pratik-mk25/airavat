@@ -1,170 +1,132 @@
-import base64
-import os
+"""
+Streamlit GCS Main Application Entry Point with 3-Column Layout:
+Top: Scenario Controls
+Left: render_map_panel(data)
+Middle: render_telemetry_panel(data)
+Right: render_world_model_panel(data) & render_reactor_visual_panel(data)
+"""
+
 import time
-
-import pandas as pd
-import requests
+import math
 import streamlit as st
-
-AI_URL = os.getenv("AI_URL", "http://localhost:8000")
+from services.gcs_map import render_map_panel
+from services.gcs_panels import (
+    render_controls,
+    render_telemetry_panel,
+    render_world_model_panel,
+    render_reactor_visual_panel,
+    DEFAULT_AI_URL
+)
 
 st.set_page_config(
-    page_title="TESSERACT-X | AIRAVAT GCS",
+    page_title="AIRAVAT Ground Control Station",
+    page_icon="✈️",
     layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.title("TESSERACT-X | AIRAVAT GCS")
-st.caption("All-Python Ground Control Station & Reactor.inc Visual World Model")
+st.title("AIRAVAT Ground Control Station")
 
-# --- SIDEBAR CONTROL PANEL ---
-st.sidebar.title("🎛️ Flight Control Panel")
+# Initialize simulated drone position state in Streamlit session
+if "sim_step" not in st.session_state:
+    st.session_state.sim_step = 0
 
-# Mode Selection
-st.sidebar.subheader("Mode Selection")
-mode_choice = st.sidebar.radio(
-    "Active Control Layer",
-    ["AIRAVAT", "BASELINE"],
-    index=0
-)
+st.session_state.sim_step += 1
+step = st.session_state.sim_step
 
-if st.sidebar.button("Set Active Mode"):
-    try:
-        res = requests.post(f"{AI_URL}/mode", json={"mode": mode_choice}, timeout=2)
-        if res.status_code == 200:
-            st.sidebar.success(f"Mode set to: {mode_choice}")
-    except Exception as e:
-        st.sidebar.error(f"Error setting mode: {e}")
+# Base position (Bengaluru coordinates near planned route)
+base_lat = 12.9716
+base_lon = 77.5946
 
-# Interactive Fault Injection Buttons
-st.sidebar.subheader("Interactive Fault Injection")
+# Orbit/path simulation calculation
+radius = 0.0006
+angle = step * 0.1
+current_lat = base_lat + radius * math.sin(angle)
+current_lon = base_lon + radius * math.cos(angle)
+current_alt = 45.0 + 5.0 * math.sin(step * 0.2)
 
-col_btn1, col_btn2 = st.sidebar.columns(2)
+current_mode = "AIRAVAT"
 
-if col_btn1.button("🌬️ Inject Wind"):
-    try:
-        requests.post(f"{AI_URL}/event", json={"type": "WIND"}, timeout=2)
-        st.sidebar.warning("Injected +8 m/s Wind Spike (TTL: 20 ticks)")
-    except Exception as e:
-        st.sidebar.error(f"Failed: {e}")
+# Backend telemetry payload matching the integration contract
+telemetry_data = {
+    "state": {
+        "position": {
+            "lat": current_lat,
+            "lon": current_lon,
+            "alt": current_alt
+        },
+        "velocity": {
+            "speed": 12.5,
+            "yaw": math.degrees(angle)
+        },
+        "battery_pct": max(15.0, 100.0 - (step * 0.2)),
+        "wind_ms": 5.2,
+        "obstacle_distance_m": 120.0,
+        "mission_progress_pct": min(100.0, step * 1.5)
+    },
+    "selected_action": "AIRAVAT Reroute" if step % 20 < 10 else "Continue",
+    "world_model_predictions": [
+        {
+            "action": "Continue",
+            "predicted_battery_pct": 78.5,
+            "risk_level": "LOW",
+            "eta_seconds": 120,
+            "score": 0.99
+        },
+        {
+            "action": "AIRAVAT Reroute",
+            "predicted_battery_pct": 74.0,
+            "risk_level": "LOW",
+            "eta_seconds": 135,
+            "score": 0.96
+        },
+        {
+            "action": "Hold",
+            "predicted_battery_pct": 70.0,
+            "risk_level": "MEDIUM",
+            "eta_seconds": 180,
+            "score": 0.82
+        }
+    ],
+    "reason": "AIRAVAT Qwen model predicts safe flight trajectory around obstacle zone.",
+    "metrics": {
+        "reactor_visual": "https://images.unsplash.com/photo-1508614589041-895b88991e3e?w=600&auto=format&fit=crop&q=60"
+    },
+    "mode": current_mode,
+    "status": "LIVE"
+}
 
-if col_btn2.button("🛑 Inject Obstacle"):
-    try:
-        requests.post(f"{AI_URL}/event", json={"type": "OBSTACLE"}, timeout=2)
-        st.sidebar.warning("Injected -25m Obstacle Proximity (TTL: 20 ticks)")
-    except Exception as e:
-        st.sidebar.error(f"Failed: {e}")
-
-if col_btn1.button("🪫 Low Battery"):
-    try:
-        requests.post(f"{AI_URL}/event", json={"type": "LOW_BATTERY"}, timeout=2)
-        st.sidebar.warning("Injected -25% Battery Drop (TTL: 20 ticks)")
-    except Exception as e:
-        st.sidebar.error(f"Failed: {e}")
-
-if col_btn2.button("♻️ Reset Env"):
-    try:
-        requests.post(f"{AI_URL}/event", json={"type": "RESET"}, timeout=2)
-        st.sidebar.info("Environment Overrides Cleared")
-    except Exception as e:
-        st.sidebar.error(f"Failed: {e}")
-
-
-def render_reactor_visual_panel(data: dict):
-    """Renders the Reactor.inc Visual World Model FPV frame prediction."""
-    st.subheader("👁️ Reactor Visual World Model")
+# Top Sidebar Controls
+with st.sidebar:
+    st.header("⚙️ Simulation Settings")
+    ai_agent_url = st.text_input("AI Agent Endpoint URL", value=DEFAULT_AI_URL)
+    auto_refresh = st.checkbox("Auto Refresh Stream", value=True)
+    refresh_rate = st.slider("Update Interval (s)", 0.5, 3.0, 1.0)
     
-    visual_url = data.get("reactor_visual_url") or data.get("metrics", {}).get("reactor_visual")
-    prompt = data.get("reactor_prompt")
-    
-    if not visual_url:
-        st.info("Waiting for Reactor visual prediction...")
-        return
+    if st.button("Reset Telemetry Trail"):
+        st.session_state.actual_route = []
+        st.session_state.sim_step = 0
+        st.rerun()
 
-    if prompt:
-        st.caption(f"Prompt: *\"{prompt}\"*")
-    else:
-        st.caption(f"Predicted FPV visual outcome for action: **{data.get('selected_action')}**")
+# 1. Top Scenario Controls Panel
+render_controls(ai_agent_url, current_mode)
 
-    if visual_url.startswith("http") or visual_url.startswith("data:image"):
-        st.image(visual_url, use_container_width=True)
-    else:
-        try:
-            st.image(base64.b64decode(visual_url), use_container_width=True)
-        except Exception:
-            st.image(visual_url, use_container_width=True)
+st.markdown("---")
 
+# 2. 3-Column Dashboard Layout (Left, Middle, Right)
+left, middle, right = st.columns([1, 1, 1])
 
-# --- MAIN DASHBOARD CONTENT ---
-try:
-    response = requests.get(f"{AI_URL}/live", timeout=2)
-    data = response.json()
-except Exception:
-    data = None
+with left:
+    render_map_panel(telemetry_data)
 
-if not data or data.get("status") == "WAITING":
-    st.warning("Waiting for simulation state...")
-    st.info("Make sure SIM Agent and AI Agent are running.")
+with middle:
+    render_telemetry_panel(telemetry_data)
 
-elif data.get("status") == "LIVE":
-    state = data["state"]
+with right:
+    render_world_model_panel(telemetry_data)
+    render_reactor_visual_panel(telemetry_data)
 
-    mode_badge = "🟢 AIRAVAT AI ACTIVE" if data.get("mode") == "AIRAVAT" else "🔴 BASELINE (FIXED PLAN)"
-    st.subheader(f"System Status: {mode_badge}")
-
-    # Top Row Metrics
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Battery %", f"{state['battery_pct']:.1f}%")
-    col2.metric("Wind m/s", f"{state['wind_ms']:.1f}")
-    col3.metric("Obstacle m", f"{state['obstacle_distance_m']:.1f}")
-    col4.metric("Mission Progress", f"{state['mission_progress_pct']:.1f}%")
-
-    if data.get("mode") == "AIRAVAT":
-        st.success(f"Selected Action: {data['selected_action']}")
-        st.info(data["reason"])
-    else:
-        st.error(f"Selected Action: {data['selected_action']}")
-        st.warning(data["reason"])
-
-    # Two-Column Layout: Left (World Model Table & Position) | Right (Reactor Visual Panel)
-    left_col, right_col = st.columns([1, 1])
-
-    with left_col:
-        st.subheader("Predictive World Model Outcomes")
-        df = pd.DataFrame(data.get("world_model_predictions", []))
-        if not df.empty:
-            df = df.sort_values("score", ascending=False)
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.warning("No predictions in Baseline Mode (Fixed Plan active).")
-
-        st.subheader("Position Telemetry")
-        position = state["position"]
-        st.write(
-            f"📍 **Latitude**: `{position['lat']:.6f}` | "
-            f"**Longitude**: `{position['lon']:.6f}` | "
-            f"**Altitude**: `{position['alt']:.1f}m`"
-        )
-
-        # Performance Metrics Summary
-        metrics = data.get("metrics", {})
-        if metrics:
-            st.subheader("Flight Performance Metrics")
-            m_col1, m_col2 = st.columns(2)
-            m_col1.metric("Danger Events", metrics.get("danger_events", 0))
-            m_col2.metric("Min Obstacle Dist", f"{metrics.get('min_obstacle_distance', 0):.1f}m")
-
-    with right_col:
-        render_reactor_visual_panel(data)
-
-    with st.expander("Raw Live Payload JSON"):
-        st.json(data)
-
-else:
-    st.error("Unknown payload format")
-
-time.sleep(2)
-
-try:
+# Auto refresh trigger for live simulation demo
+if auto_refresh:
+    time.sleep(refresh_rate)
     st.rerun()
-except Exception:
-    st.experimental_rerun()

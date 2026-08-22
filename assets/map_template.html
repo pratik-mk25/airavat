@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIRAVAT Mission Map</title>
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body, html, #map {
+            width: 100%;
+            height: 100%;
+            background-color: #090d16;
+            font-family: 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Tactical Dark Map Styling */
+        .leaflet-container {
+            background: #090d16 !important;
+        }
+        .leaflet-tile {
+            filter: brightness(0.65) invert(1) contrast(2.8) hue-rotate(200deg) saturate(0.4) brightness(0.7);
+        }
+
+        /* Inner Tactical Corner Aperture Brackets (Matching Camera Viewport) */
+        .map-corner-bracket {
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            border: 1.5px solid rgba(0, 240, 255, 0.7);
+            pointer-events: none;
+            z-index: 1000;
+        }
+        .corner-tl { top: 10px; left: 10px; border-right: none; border-bottom: none; }
+        .corner-tr { top: 10px; right: 10px; border-left: none; border-bottom: none; }
+        .corner-bl { bottom: 10px; left: 10px; border-right: none; border-top: none; }
+        .corner-br { bottom: 10px; right: 10px; border-left: none; border-top: none; }
+
+        /* Map Legend */
+        #map-legend {
+            position: absolute;
+            bottom: 15px;
+            left: 15px;
+            z-index: 1000;
+            background: rgba(13, 19, 33, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 8px 12px;
+            color: #cbd5e1;
+            font-size: 11px;
+            backdrop-filter: blur(6px);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .legend-line {
+            width: 24px;
+            height: 3px;
+            border-radius: 2px;
+        }
+        .line-planned {
+            background: repeating-linear-gradient(90deg, #ff3366, #ff3366 4px, transparent 4px, transparent 8px);
+        }
+        .line-airavat {
+            background: #00ff88;
+            box-shadow: 0 0 8px #00ff88;
+        }
+        .line-rtl {
+            background: repeating-linear-gradient(90deg, #00f0ff, #00f0ff 4px, transparent 4px, transparent 8px);
+        }
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .dot-wp { background: #00f0ff; box-shadow: 0 0 6px #00f0ff; }
+        .dot-obs { background: #ff3366; box-shadow: 0 0 6px #ff3366; }
+
+        /* Custom Marker Pulsing Animations */
+        .drone-marker-container {
+            transition: transform 0.2s linear;
+        }
+        .drone-icon {
+            width: 32px;
+            height: 32px;
+            filter: drop-shadow(0px 0px 8px #00f0ff);
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <!-- Inner Tactical Corner Aperture Brackets (Matching Camera) -->
+    <div class="map-corner-bracket corner-tl"></div>
+    <div class="map-corner-bracket corner-tr"></div>
+    <div class="map-corner-bracket corner-bl"></div>
+    <div class="map-corner-bracket corner-br"></div>
+
+    <!-- Legend -->
+    <div id="map-legend">
+        <div class="legend-item">
+            <div class="legend-line line-planned"></div>
+            <span>Planned Path (Red Dotted)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-line line-airavat"></div>
+            <span>AIRAVAT Route (Green Line)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-line line-rtl"></div>
+            <span>Return-To-Launch (RTL)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot dot-wp"></div>
+            <span>Waypoints</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot dot-obs"></div>
+            <span>Obstacles</span>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Map centered on flight test center
+        const startLat = 37.7749;
+        const startLng = -122.4194;
+        const map = L.map('map', {
+            zoomControl: false,
+            attributionControl: false
+        }).setView([startLat, startLng], 16);
+
+        // Dark Map Tile Layer
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19,
+            subdomains: 'abcd'
+        }).addTo(map);
+
+        // Custom Drone Icon HTML
+        const droneIconHtml = `
+            <div class="drone-marker-container" id="drone-svg-box">
+                <svg class="drone-icon" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="32" cy="32" r="6" fill="#00f0ff" />
+                    <line x1="32" y1="32" x2="14" y2="14" stroke="#00f0ff" stroke-width="3" />
+                    <line x1="32" y1="32" x2="50" y2="14" stroke="#00f0ff" stroke-width="3" />
+                    <line x1="32" y1="32" x2="14" y2="50" stroke="#00f0ff" stroke-width="3" />
+                    <line x1="32" y1="32" x2="50" y2="50" stroke="#00f0ff" stroke-width="3" />
+                    <circle cx="14" cy="14" r="7" fill="#090d16" stroke="#00ff88" stroke-width="2" />
+                    <circle cx="50" cy="14" r="7" fill="#090d16" stroke="#00ff88" stroke-width="2" />
+                    <circle cx="14" cy="50" r="7" fill="#090d16" stroke="#00ff88" stroke-width="2" />
+                    <circle cx="50" cy="50" r="7" fill="#090d16" stroke="#00ff88" stroke-width="2" />
+                    <polygon points="32,18 26,30 38,30" fill="#00ff88" />
+                </svg>
+            </div>
+        `;
+
+        const droneIcon = L.divIcon({
+            html: droneIconHtml,
+            className: '',
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
+        });
+
+        let droneMarker = L.marker([startLat, startLng], { icon: droneIcon }).addTo(map);
+
+        // Path Layers
+        let plannedPolyline = L.polyline([], {
+            color: '#ff3366',
+            weight: 3,
+            dashArray: '8, 8',
+            opacity: 0.85
+        }).addTo(map);
+
+        let airavatPolyline = L.polyline([], {
+            color: '#00ff88',
+            weight: 4,
+            opacity: 0.95
+        }).addTo(map);
+
+        let rtlPolyline = L.polyline([], {
+            color: '#00f0ff',
+            weight: 3,
+            dashArray: '6, 6',
+            opacity: 0.8
+        }).addTo(map);
+
+        let actualPathPolyline = L.polyline([], {
+            color: '#ffffff',
+            weight: 2,
+            opacity: 0.4
+        }).addTo(map);
+
+        // Containers
+        let waypointMarkers = [];
+        let obstacleCircles = [];
+        let rtlMarker = null;
+
+        // API called from Python backend to update Map state
+        window.updateMapData = function(data) {
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch(e) { return; }
+            }
+            if (!data) return;
+
+            // 1. Update Drone Marker Position & Heading
+            if (data.drone_pos) {
+                const lat = data.drone_pos[0];
+                const lng = data.drone_pos[1];
+                const yaw = data.drone_yaw || 0;
+
+                droneMarker.setLatLng([lat, lng]);
+                const svgBox = document.getElementById('drone-svg-box');
+                if (svgBox) {
+                    svgBox.style.transform = `rotate(${yaw}deg)`;
+                }
+                actualPathPolyline.addLatLng([lat, lng]);
+            }
+
+            // 2. Update Planned Route (Red Dotted Line)
+            if (data.planned_route) {
+                plannedPolyline.setLatLngs(data.planned_route);
+            }
+
+            // 3. Update AIRAVAT Route (Green Line)
+            if (data.airavat_route) {
+                airavatPolyline.setLatLngs(data.airavat_route);
+            }
+
+            // 4. Update RTL Route (Cyan Dotted Line)
+            if (data.rtl_route) {
+                rtlPolyline.setLatLngs(data.rtl_route);
+            }
+
+            // 5. Update Waypoints
+            if (data.waypoints) {
+                waypointMarkers.forEach(m => map.removeLayer(m));
+                waypointMarkers = [];
+                data.waypoints.forEach((wp, idx) => {
+                    const m = L.circleMarker([wp[0], wp[1]], {
+                        radius: 7,
+                        color: '#00f0ff',
+                        fillColor: '#090d16',
+                        fillOpacity: 0.9,
+                        weight: 2
+                    }).addTo(map);
+                    m.bindTooltip(`WP-${idx + 1}`, { permanent: true, direction: 'top', className: 'wp-tooltip' });
+                    waypointMarkers.push(m);
+                });
+            }
+
+            // 6. Update Obstacles
+            if (data.obstacles) {
+                obstacleCircles.forEach(c => map.removeLayer(c));
+                obstacleCircles = [];
+                data.obstacles.forEach(obs => {
+                    const c = L.circle([obs.lat, obs.lng], {
+                        radius: obs.radius || 35,
+                        color: '#ff3366',
+                        fillColor: '#ff3366',
+                        fillOpacity: 0.3,
+                        weight: 2
+                    }).addTo(map);
+                    c.bindTooltip(`OBSTACLE (${obs.id})`, { permanent: true, direction: 'center', className: 'obs-tooltip' });
+                    obstacleCircles.push(c);
+                });
+            }
+
+            // 7. Update RTL Base Marker
+            if (data.rtl_point && !rtlMarker) {
+                rtlMarker = L.marker([data.rtl_point[0], data.rtl_point[1]], {
+                    icon: L.divIcon({
+                        html: `<div style="background:#00f0ff; color:#090d16; font-weight:bold; font-size:10px; border-radius:4px; padding:2px 6px; box-shadow:0 0 10px #00f0ff;">RTL BASE</div>`,
+                        className: ''
+                    })
+                }).addTo(map);
+            }
+        };
+
+        // Custom Tooltip Styles
+        const style = document.createElement('style');
+        style.innerHTML = `
+            .wp-tooltip {
+                background: #090d16 !important;
+                border: 1px solid #00f0ff !important;
+                color: #00f0ff !important;
+                font-weight: bold;
+                font-size: 10px;
+                padding: 1px 4px;
+            }
+            .obs-tooltip {
+                background: rgba(255, 51, 102, 0.9) !important;
+                border: none !important;
+                color: #ffffff !important;
+                font-weight: bold;
+                font-size: 10px;
+            }
+        `;
+        document.head.appendChild(style);
+    </script>
+</body>
+</html>
