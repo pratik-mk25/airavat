@@ -1,4 +1,4 @@
-from typing import List, Literal
+from typing import List, Literal, Optional
 from pydantic import BaseModel
 
 Action = Literal[
@@ -48,3 +48,13 @@ class LivePayload(BaseModel):
     world_model_predictions: List[WorldModelPrediction]
     selected_action: Action
     reason: str
+
+
+class ModeRequest(BaseModel):
+    mode: str  # "AIRAVAT" or "BASELINE"
+
+
+class EventRequest(BaseModel):
+    event_type: str  # "INJECT_WIND", "INJECT_OBSTACLE", "LOW_BATTERY", "RESET"
+    value: float = 0.0
+    description: str = ""
