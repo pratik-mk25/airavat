@@ -2,11 +2,11 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from typing import Optional
+from typing import Optional, Literal
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from shared.contracts import LivePayload, SimState, ModeRequest, EventRequest
+from shared.contracts import LivePayload, SimState, EventIn, ModeIn
 from shared.world_model import evaluate_all_actions
 
 app = FastAPI(title="AIRAVAT AI Agent")
@@ -20,8 +20,16 @@ app.add_middleware(
 )
 
 latest_payload: Optional[LivePayload] = None
-current_mode: str = "AIRAVAT"
-active_event: Optional[EventRequest] = None
+
+# Global runtime state
+runtime_mode = "AIRAVAT"
+
+event_modifier = {
+    "wind_ms": 0.0,
+    "obstacle_distance_m": 0.0,
+    "battery_pct": 0.0,
+    "ttl": 0,
+}
 
 
 @app.get("/health")
@@ -29,54 +37,84 @@ def health():
     return {
         "status": "ok",
         "service": "airavat-ai-agent",
-        "mode": current_mode,
-        "active_event": active_event.event_type if active_event else None
+        "runtime_mode": runtime_mode,
+        "event_modifier": event_modifier,
+    }
+
+
+@app.post("/event")
+def trigger_event(event: EventIn):
+    global event_modifier
+
+    if event.type == "WIND":
+        event_modifier = {
+            "wind_ms": 8.0,
+            "obstacle_distance_m": 0.0,
+            "battery_pct": 0.0,
+            "ttl": 20,
+        }
+
+    elif event.type == "OBSTACLE":
+        event_modifier = {
+            "wind_ms": 0.0,
+            "obstacle_distance_m": -25.0,
+            "battery_pct": 0.0,
+            "ttl": 20,
+        }
+
+    elif event.type == "LOW_BATTERY":
+        event_modifier = {
+            "wind_ms": 0.0,
+            "obstacle_distance_m": 0.0,
+            "battery_pct": -25.0,
+            "ttl": 20,
+        }
+
+    elif event.type == "RESET":
+        event_modifier = {
+            "wind_ms": 0.0,
+            "obstacle_distance_m": 0.0,
+            "battery_pct": 0.0,
+            "ttl": 0,
+        }
+
+    return {
+        "status": "event_accepted",
+        "event": event.type,
+        "modifier": event_modifier,
     }
 
 
 @app.post("/mode")
-def set_mode(req: ModeRequest):
-    global current_mode
-    current_mode = req.mode
-    return {"status": "ok", "mode": current_mode}
+def set_mode(mode_input: ModeIn):
+    global runtime_mode
+    runtime_mode = mode_input.mode
 
-
-@app.post("/event")
-def trigger_event(req: EventRequest):
-    global active_event
-    if req.event_type == "RESET":
-        active_event = None
-    else:
-        active_event = req
     return {
-        "status": "ok",
-        "event_received": req.event_type,
-        "description": req.description
+        "status": "mode_updated",
+        "mode": runtime_mode,
     }
 
 
 @app.post("/state")
 def receive_state(state: SimState):
-    global latest_payload, active_event
+    global latest_payload, event_modifier, runtime_mode
 
     state_dict = state.model_dump()
 
-    # Apply interactive event overrides if injected from GCS
-    if active_event:
-        if active_event.event_type == "INJECT_WIND":
-            state_dict["wind_ms"] = active_event.value if active_event.value > 0 else 16.5
-        elif active_event.event_type == "INJECT_OBSTACLE":
-            state_dict["obstacle_distance_m"] = active_event.value if active_event.value > 0 else 4.5
-        elif active_event.event_type == "LOW_BATTERY":
-            state_dict["battery_pct"] = active_event.value if active_event.value > 0 else 18.0
+    # Apply event modifiers if TTL is active (> 0)
+    if event_modifier["ttl"] > 0:
+        state_dict["wind_ms"] += event_modifier["wind_ms"]
+        state_dict["obstacle_distance_m"] = max(0.0, state_dict["obstacle_distance_m"] + event_modifier["obstacle_distance_m"])
+        state_dict["battery_pct"] = max(0.0, state_dict["battery_pct"] + event_modifier["battery_pct"])
+        event_modifier["ttl"] -= 1
 
-    # Re-construct updated SimState
     updated_state = SimState(**state_dict)
 
     predictions = evaluate_all_actions(state_dict)
     best = predictions[0]
 
-    if current_mode == "BASELINE":
+    if runtime_mode == "BASELINE":
         selected_action = "Continue"
         reason = (
             f"BASELINE (Fixed Plan Active): Blindly continuing mission. "
@@ -93,7 +131,7 @@ def receive_state(state: SimState):
 
     payload = LivePayload(
         timestamp=updated_state.timestamp,
-        mode=current_mode,
+        mode=runtime_mode,
         status="LIVE",
         state=updated_state,
         world_model_predictions=predictions,

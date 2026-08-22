@@ -18,20 +18,19 @@ st.caption("All-Python Ground Control Station & Interactive Fault Injector")
 # --- SIDEBAR CONTROL PANEL ---
 st.sidebar.title("🎛️ Flight Control Panel")
 
-# Mode Toggle
+# Mode Selection
 st.sidebar.subheader("Mode Selection")
 mode_choice = st.sidebar.radio(
     "Active Control Layer",
-    ["AIRAVAT (AI Active)", "BASELINE (Fixed Mission Plan)"],
+    ["AIRAVAT", "BASELINE"],
     index=0
 )
-target_mode = "AIRAVAT" if "AIRAVAT" in mode_choice else "BASELINE"
 
 if st.sidebar.button("Set Active Mode"):
     try:
-        res = requests.post(f"{AI_URL}/mode", json={"mode": target_mode}, timeout=2)
+        res = requests.post(f"{AI_URL}/mode", json={"mode": mode_choice}, timeout=2)
         if res.status_code == 200:
-            st.sidebar.success(f"Mode set to: {target_mode}")
+            st.sidebar.success(f"Mode set to: {mode_choice}")
     except Exception as e:
         st.sidebar.error(f"Error setting mode: {e}")
 
@@ -42,28 +41,28 @@ col_btn1, col_btn2 = st.sidebar.columns(2)
 
 if col_btn1.button("🌬️ Inject Wind"):
     try:
-        requests.post(f"{AI_URL}/event", json={"event_type": "INJECT_WIND", "value": 16.5, "description": "16.5 m/s Wind Spike"}, timeout=2)
-        st.sidebar.warning("Injected 16.5 m/s Wind Gust")
+        requests.post(f"{AI_URL}/event", json={"type": "WIND"}, timeout=2)
+        st.sidebar.warning("Injected +8 m/s Wind Spike (TTL: 20 ticks)")
     except Exception as e:
         st.sidebar.error(f"Failed: {e}")
 
 if col_btn2.button("🛑 Inject Obstacle"):
     try:
-        requests.post(f"{AI_URL}/event", json={"event_type": "INJECT_OBSTACLE", "value": 4.5, "description": "4.5m Obstacle Blockade"}, timeout=2)
-        st.sidebar.warning("Injected 4.5m Obstacle Blockade")
+        requests.post(f"{AI_URL}/event", json={"type": "OBSTACLE"}, timeout=2)
+        st.sidebar.warning("Injected -25m Obstacle Proximity (TTL: 20 ticks)")
     except Exception as e:
         st.sidebar.error(f"Failed: {e}")
 
 if col_btn1.button("🪫 Low Battery"):
     try:
-        requests.post(f"{AI_URL}/event", json={"event_type": "LOW_BATTERY", "value": 18.0, "description": "Critical 18% Battery Drop"}, timeout=2)
-        st.sidebar.warning("Injected 18% Low Battery Drop")
+        requests.post(f"{AI_URL}/event", json={"type": "LOW_BATTERY"}, timeout=2)
+        st.sidebar.warning("Injected -25% Battery Drop (TTL: 20 ticks)")
     except Exception as e:
         st.sidebar.error(f"Failed: {e}")
 
 if col_btn2.button("♻️ Reset Env"):
     try:
-        requests.post(f"{AI_URL}/event", json={"event_type": "RESET", "value": 0, "description": "Reset Environmental Overrides"}, timeout=2)
+        requests.post(f"{AI_URL}/event", json={"type": "RESET"}, timeout=2)
         st.sidebar.info("Environment Overrides Cleared")
     except Exception as e:
         st.sidebar.error(f"Failed: {e}")
