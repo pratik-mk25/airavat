@@ -13,6 +13,7 @@ env/
 
 # Helper Scripts
 staggered_git_push.py
+interval_pusher.py
 
 # IDE & OS
 .vscode/
