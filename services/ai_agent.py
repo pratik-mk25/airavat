@@ -98,44 +98,62 @@ def set_mode(mode_input: ModeIn):
 
 @app.post("/state")
 def receive_state(state: SimState):
-    global latest_payload, event_modifier, runtime_mode
+    global latest_payload
+    global event_modifier
 
-    state_dict = state.model_dump()
+    sim_state = state.model_dump()
 
-    # Apply event modifiers if TTL is active (> 0)
     if event_modifier["ttl"] > 0:
-        state_dict["wind_ms"] += event_modifier["wind_ms"]
-        state_dict["obstacle_distance_m"] = max(0.0, state_dict["obstacle_distance_m"] + event_modifier["obstacle_distance_m"])
-        state_dict["battery_pct"] = max(0.0, state_dict["battery_pct"] + event_modifier["battery_pct"])
+        sim_state["wind_ms"] = max(
+            0,
+            sim_state["wind_ms"] + event_modifier["wind_ms"]
+        )
+
+        sim_state["obstacle_distance_m"] = max(
+            3,
+            sim_state["obstacle_distance_m"] + event_modifier["obstacle_distance_m"]
+        )
+
+        sim_state["battery_pct"] = max(
+            3,
+            sim_state["battery_pct"] + event_modifier["battery_pct"]
+        )
+
         event_modifier["ttl"] -= 1
 
-    updated_state = SimState(**state_dict)
-
-    predictions = evaluate_all_actions(state_dict)
-    best = predictions[0]
+    safe_state = SimState(**sim_state)
 
     if runtime_mode == "BASELINE":
-        selected_action = "Continue"
-        reason = (
-            f"BASELINE (Fixed Plan Active): Blindly continuing mission. "
-            f"Risk: {best['risk_level']}. AIRAVAT AI would choose '{best['action']}'."
-        )
-    else:
-        selected_action = best["action"]
-        reason = (
-            f"AIRAVAT AI Active: {best['action']} selected. "
-            f"Predicted battery: {best['predicted_battery_pct']}%, "
-            f"risk: {best['risk_level']}, "
-            f"ETA: {best['eta_seconds']}s."
+        payload = LivePayload(
+            timestamp=safe_state.timestamp,
+            mode="BASELINE",
+            status="LIVE",
+            state=safe_state,
+            world_model_predictions=[],
+            selected_action="Continue",
+            reason="Baseline mode: fixed mission plan, no world model adaptation.",
         )
 
+        latest_payload = payload
+        return payload
+
+    predictions = evaluate_all_actions(safe_state.model_dump())
+    best = predictions[0]
+
+    reason = (
+        f"{best['action']} selected. "
+        f"Predicted battery: {best['predicted_battery_pct']}%, "
+        f"risk: {best['risk_level']}, "
+        f"ETA: {best['eta_seconds']}s."
+    )
+
     payload = LivePayload(
-        timestamp=updated_state.timestamp,
-        mode=runtime_mode,
+        timestamp=safe_state.timestamp,
+        mode="AIRAVAT",
         status="LIVE",
-        state=updated_state,
+        state=safe_state,
         world_model_predictions=predictions,
-        selected_action=selected_action,
+        selected_action=best["action"],
         reason=reason,
     )
 
