@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -24,3 +25,9 @@ interval_pusher.py
 .pytest_cache/
 .coverage
 htmlcov/
+=======
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+>>>>>>> bd93e8a (chore: add .gitignore and cleanup pycache)
